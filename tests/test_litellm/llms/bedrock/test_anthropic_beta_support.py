@@ -390,3 +390,35 @@ class TestAnthropicBetaHeaderSupport:
             "anthropic_beta SHOULD be added for Anthropic models with cross-region prefix."
         )
         assert "context-1m-2025-08-07" in additional_fields["anthropic_beta"]
+
+    def test_converse_inference_profile_arn_respects_explicit_anthropic_beta(self):
+        """Inference profile ARNs must pass through explicitly-set anthropic-beta headers.
+
+        For inference profile ARNs, LiteLLM cannot determine the underlying model family
+        from the ARN alone — the profile ID is opaque (e.g. 'ow66n5rz5qt0'). If the user
+        has explicitly sent an anthropic-beta header, they know what model is behind their
+        profile and we must respect that. Dropping it silently breaks features like 1M
+        context for users who route via inference profiles for cost-tracking/tagging.
+        """
+        config = AmazonConverseConfig()
+        headers = {"anthropic-beta": "context-1m-2025-08-07"}
+
+        for arn_model in [
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/ow66n5rz5qt0",
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/ab12cd34",
+        ]:
+            result = config._transform_request_helper(
+                model=arn_model,
+                system_content_blocks=[],
+                optional_params={},
+                messages=[{"role": "user", "content": "Test"}],
+                headers=headers,
+            )
+
+            additional_fields = result.get("additionalModelRequestFields", {})
+            assert "anthropic_beta" in additional_fields, (
+                f"anthropic_beta SHOULD be passed through for inference profile ARN {arn_model}. "
+                "The model family cannot be determined from the ARN — the user's explicit header "
+                "must be respected."
+            )
+            assert "context-1m-2025-08-07" in additional_fields["anthropic_beta"]

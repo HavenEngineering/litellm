@@ -1036,7 +1036,7 @@ class AmazonConverseConfig(BaseConfig):
         # ONLY apply to Anthropic/Claude models - other models (e.g., Qwen, Llama) don't support this field
         # and will error with "unknown variant anthropic_beta" if included
         base_model = BedrockModelInfo.get_base_model(model)
-        if anthropic_beta_list and base_model.startswith("anthropic"):
+        if anthropic_beta_list and (base_model.startswith("anthropic") or "arn" in model.lower()):
             # Remove duplicates while preserving order
             unique_betas = []
             seen = set()

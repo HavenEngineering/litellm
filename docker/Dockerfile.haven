@@ -1,0 +1,59 @@
+# Build LiteLLM from source with fix/anthropic-beta-arn-inference-profile applied.
+# Build context: ~/projects/litellm (with fix branch checked out)
+#
+# Usage:
+#   cd ~/projects/litellm
+#   git checkout fix/anthropic-beta-arn-inference-profile
+#   podman build -f ~/projects/scratch/issue-2747-litellm-proxy/Dockerfile \
+#     -t litellm-haven:fix22018-src .
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc python3-dev libssl-dev pkg-config nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --upgrade pip build
+
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir=/wheels/ -r requirements.txt
+
+COPY pyproject.toml README.md schema.prisma poetry.lock ./
+COPY litellm/ ./litellm/
+COPY enterprise/ ./enterprise/
+COPY docker/ ./docker/
+
+RUN sed -i 's/\r$//' docker/build_admin_ui.sh && chmod +x docker/build_admin_ui.sh && ./docker/build_admin_ui.sh
+RUN rm -rf dist/* && python -m build
+
+# Runtime stage
+FROM python:3.11-slim AS runtime
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 libatomic1 nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY docker/entrypoint.sh docker/prod_entrypoint.sh ./docker/
+COPY litellm/ ./litellm/
+COPY pyproject.toml README.md schema.prisma poetry.lock ./
+
+COPY --from=builder /wheels/ /wheels/
+COPY --from=builder /app/dist/*.whl .
+
+RUN pip install --no-cache-dir *.whl /wheels/* --no-index --find-links=/wheels/ && \
+    rm -f *.whl && rm -rf /wheels
+
+RUN prisma generate && \
+    sed -i 's/\r$//' docker/entrypoint.sh && \
+    sed -i 's/\r$//' docker/prod_entrypoint.sh && \
+    chmod +x docker/entrypoint.sh docker/prod_entrypoint.sh
+
+EXPOSE 4000/tcp
+ENTRYPOINT ["docker/prod_entrypoint.sh"]
+CMD ["--port", "4000"]
